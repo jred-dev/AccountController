@@ -38,20 +38,24 @@ namespace API.Controllers
         }
 
         /// <summary>
-        /// Register endpoint
+        /// Registers a new user.
         /// </summary>
-        /// <param name="register"></param>
-        /// <returns></returns>
+        /// <param name="register">The registration data.</param>
+        /// <returns>An HTTP response indicating success or failure.</returns>
         [HttpPost("register")]
         public async Task<ActionResult<string>> Register(RegisterDto register)
         {
             try
             {
+                // Check if the email address already exists
                 if (await _userManager.Users.AnyAsync(_ => _.Email.ToLower() == register.Email.ToLower()))
                     return BadRequest("Email address already exists");
 
+                // Map the registration data to an AppUser object
                 var user = _mapper.Map<AppUser>(register);
                 user.AuthenticationType = AuthenticationType.Email.ToString();
+
+                // Create the user
                 var result = await CreateUser(user, register.Password);
 
                 if (!result.Succeeded) return BadRequest(result.Errors.ToList().FirstOrDefault().Description);
@@ -66,22 +70,26 @@ namespace API.Controllers
         }
 
         /// <summary>
-        /// Login endpoint
+        /// Authenticates a user by validating their credentials.
         /// </summary>
-        /// <param name="login"></param>
-        /// <returns></returns>
+        /// <param name="login">The login data.</param>
+        /// <returns>An HTTP response indicating success or failure.</returns>
         [HttpPost("login")]
         public async Task<ActionResult> Login(LoginDto login)
         {
             try
             {
+                // Find the user based on the provided username
                 var user = await _userManager.Users.SingleOrDefaultAsync(_ => _.UserName.ToLower() == login.UserName.ToLower());
-                if (user == null) return BadRequest("Invalid email address");
+                if (user == null)
+                    return BadRequest("Invalid email address");
 
+                // Check if the provided password matches the user's stored password
                 var result = await _userManager.CheckPasswordAsync(user, login.Password);
                 if (!result)
                     return BadRequest("Invalid email or password");
 
+                // Create user access (e.g., generate tokens, set session, etc.)
                 var userAccess = await CreateUserAccess(user);
 
                 return Ok(userAccess);
@@ -93,19 +101,23 @@ namespace API.Controllers
             }
         }
 
+
         /// <summary>
-        /// Change pass
+        /// Changes the user's password.
         /// </summary>
-        /// <param name="changePasswordDto"></param>
-        /// <returns></returns>
+        /// <param name="changePasswordDto">The data for changing the password.</param>
+        /// <returns>An HTTP response indicating success or failure.</returns>
         [HttpPost("changePassword")]
         public async Task<ActionResult> ChangePassword(ChangePasswordDto changePasswordDto)
         {
             try
             {
+                // Find the user based on the current user's identity
                 var user = await _userManager.FindByNameAsync(User.Identity.Name);
-                if (user == null) return NotFound("User not found");
+                if (user == null)
+                    return NotFound("User not found");
 
+                // Attempt to change the password
                 var result = await _userManager.ChangePasswordAsync(user, changePasswordDto.OldPassword, changePasswordDto.NewPassword);
                 if (!result.Succeeded)
                     return BadRequest(result.Errors.FirstOrDefault()?.Description);
@@ -114,66 +126,77 @@ namespace API.Controllers
             }
             catch (Exception e)
             {
-                _logger.LogError(e, "An error was encountered during user change password");
+                _logger.LogError(e, "An error was encountered during user password change");
                 return BadRequest(REQ_ERR);
             }
         }
 
+
         /// <summary>
-        /// Sign in using google auth
+        /// Initiates Google authentication for the user.
         /// </summary>
-        /// <returns></returns>
+        /// <returns>An HTTP response that redirects to the Google authentication provider.</returns>
         [HttpGet("signin-google")]
         public IActionResult SignInWithGoogle()
         {
             try
             {
+                // Set the redirect URI for Google authentication
                 var properties = new AuthenticationProperties { RedirectUri = Url.Action("authorize") };
+
+                // Challenge the user using Google authentication
                 return Challenge(properties, GoogleDefaults.AuthenticationScheme);
             }
             catch (Exception e)
             {
-                _logger.LogError(e, "An error was encountered during user google signin");
+                _logger.LogError(e, "An error was encountered during user Google sign-in");
                 return BadRequest(REQ_ERR);
             }
         }
 
+
         /// <summary>
-        /// Sign in using facebook auth
+        /// Initiates Facebook authentication for the user.
         /// </summary>
-        /// <returns></returns>
+        /// <returns>An HTTP response that redirects to the Facebook authentication provider.</returns>
         [HttpGet("signin-facebook")]
         public IActionResult SignInWithFacebook()
         {
             try
             {
+                // Set the redirect URI for Facebook authentication
                 var properties = new AuthenticationProperties { RedirectUri = Url.Action("authorize") };
+
+                // Challenge the user using Facebook authentication
                 return Challenge(properties, FacebookDefaults.AuthenticationScheme);
             }
             catch (Exception e)
             {
-                _logger.LogError(e, "An error was encountered during user facebook signin");
+                _logger.LogError(e, "An error was encountered during user Facebook sign-in");
                 return BadRequest(REQ_ERR);
             }
         }
 
+
         /// <summary>
-        /// Authorize endpoint
+        /// Handles user authorization based on external authentication providers.
         /// </summary>
-        /// <returns></returns>
+        /// <returns>An HTTP response indicating success or failure.</returns>
         [HttpGet("authorize")]
         public async Task<IActionResult> Authorize()
         {
             try
             {
+                // Authenticate the user using the specified authentication scheme
                 var authResult = await HttpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
                 if (authResult?.Succeeded != true)
                     return BadRequest("External login failed");
 
+                // Find the user based on the email obtained from claims
                 var user = await _userManager.FindByNameAsync(authResult.Principal.FindFirstValue(ClaimTypes.Email));
                 bool existingUser = true;
-                //if new user create account
-                //gets info from claims
+
+                // If the user is new, create an account and extract relevant information from claims
                 if (user == null)
                 {
                     existingUser = false;
@@ -188,11 +211,14 @@ namespace API.Controllers
                     };
 
                     var result = await CreateUser(user);
-                    if (!result.Succeeded) return BadRequest(result.Errors.ToList().FirstOrDefault().Description);
+                    if (!result.Succeeded)
+                        return BadRequest(result.Errors.ToList().FirstOrDefault().Description);
                 }
 
+                // Create user access (e.g., generate tokens, set session, etc.)
                 var userAccess = await CreateUserAccess(user);
                 userAccess.EU = existingUser;
+
                 return Ok(userAccess);
             }
             catch (Exception e)
@@ -202,22 +228,45 @@ namespace API.Controllers
             }
         }
 
+
         #region PRIVATE METHODS
+        /// <summary>
+        /// Creates a new user account.
+        /// </summary>
+        /// <param name="appUser">The user to create.</param>
+        /// <param name="password">Optional password for the user.</param>
+        /// <returns>An IdentityResult indicating success or failure.</returns>
         private async Task<IdentityResult> CreateUser(AppUser appUser, string password = "")
         {
-            var result = password != string.Empty ? await _userManager.CreateAsync(appUser, password) : await _userManager.CreateAsync(appUser);
-            if (!result.Succeeded) return result;
+            // Create the user with the specified password (if provided)
+            var result = password != string.Empty
+                ? await _userManager.CreateAsync(appUser, password)
+                : await _userManager.CreateAsync(appUser);
 
+            if (!result.Succeeded)
+                return result;
+
+            // Assign the 'User' role to the newly created user
             var roleResult = await _userManager.AddToRoleAsync(appUser, Constants.AccountType.User);
             return roleResult;
         }
 
+
+        /// <summary>
+        /// Creates user access tokens for the given <paramref name="appUser"/>.
+        /// </summary>
+        /// <param name="appUser">The user for whom to generate tokens.</param>
+        /// <returns>A <see cref="UserDto"/> containing access and refresh tokens.</returns>
         private async Task<UserDto> CreateUserAccess(AppUser appUser)
         {
+            // Generate an access token for the user
             var accessToken = await _token.GenerateAccessToken(appUser);
+
+            // Generate a refresh token
             var refreshToken = await _token.GenerateRefreshToken();
 
-            var userToken = new UserDto()
+            // Create a UserDto with relevant information
+            var userToken = new UserDto
             {
                 Id = appUser.NameIdentifier ?? appUser.Id.ToString(),
                 Name = $"{appUser.FirstName} {appUser.LastName}",
@@ -229,6 +278,7 @@ namespace API.Controllers
 
             return userToken;
         }
+
     }
     #endregion
 }
